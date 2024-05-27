@@ -118,3 +118,7 @@ $ python3 saucepot-client.py -d 18.246.19.238 -p 80
 ## License
 
 This project is licensed under the BSD-3-Clause License. See the [LICENSE](LICENSE) file for details.
+
+## Disclaimer
+
+Warning: This tool is intended solely for educational use. Using this tool to test hosts without explicit permission is illegal. Misuse for malicious purposes may lead to legal consequences. The author assumes no responsibility for misuse. Use at your own risk.
