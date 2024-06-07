@@ -121,4 +121,4 @@ This project is licensed under the BSD-3-Clause License. See the [LICENSE](LICEN
 
 ## Disclaimer
 
-Warning: This tool is intended solely for educational use. Using this tool to test hosts without explicit permission is illegal. Misuse for malicious purposes may lead to legal consequences. The author assumes no responsibility for misuse. Use at your own risk.
+This tool is provided solely for educational use. Using this tool to test hosts without explicit permission of the host or for any malicious purpose is expressly prohibited and may violate applicable laws. The author is not responsible for misuse. The author provides this tool “AS IS” without warranty of any kind, and will not be liable for any results of use.
