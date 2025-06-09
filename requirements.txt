@@ -1,0 +1,4 @@
+psutil~=5.9.5
+pycurl~=7.45.2
+scapy~=2.5.0
+tqdm~=4.64.1
