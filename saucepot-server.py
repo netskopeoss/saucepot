@@ -62,8 +62,6 @@ knocks = {
     'session-end'  : [29900, 29800, 29700],
 }
 
-firewall = None
-
 # file as a c2 command dispatcher
 dispatcher = '/var/www/html/chk-version'
 
@@ -73,7 +71,6 @@ seq = {}        # sequence no. in TCP headers
 
 def pkt_handler(pkt):
     global knocks
-    global firewall
     global c2data
     global seq
     global verbosity
@@ -110,7 +107,6 @@ def pkt_handler(pkt):
                 if is_fully_knocked(k, sip):
                     if verbosity >= 1:
                         printmsg(f'Knock sequence "{k}" received from {sip}')
-                    firewall.allow(sip)
 
                     if k == 'session-start':
                         stage[sip]['session-end'] = -1
@@ -209,10 +205,8 @@ def console_thread():
     """The console thread that handles user inputs"""
     global dport
     global redir_port
-    global firewall
     user_input = ''
 
-    firewall = Firewall(sniff_port=dport, redir_port=redir_port)
     c2_command_dispatch('nop')
     help()
 
@@ -225,7 +219,6 @@ def console_thread():
         else:
             c2_command_dispatch(user_input)
 
-    del firewall
     os._exit(0)
 
 
@@ -384,41 +377,6 @@ def sniffer_thread():
 
     printmsg(f'Sniffing packets with filter "{filter}" ...')
     sniff(filter=filter, prn=pkt_handler, store=False, iface=list(conf.ifaces))
-
-
-class Firewall:
-    """A class to apply or lift firewall rules
-    We keep rules in NAT PREROUTING chain only, but jump target DROP or REJECT is not applicable to that chain.
-    Redirecting it to port 0 as a workaround to block."""
-
-    def __init__(self, sniff_port:int, redir_port:int):
-        self.sniff_port = sniff_port
-        self.redir_port = redir_port
-        self.chain = 'SAUCEPOT'
-        self.interface  = 'ens5'
-        self.allowlist = []
-
-        os.system(f'sudo iptables -t nat -N {self.chain}')
-        os.system(f'sudo iptables -t nat -I {self.chain} -i {self.interface} -j RETURN')
-        os.system(f'sudo iptables -t nat -I {self.chain} -i {self.interface} -p tcp -m multiport --dport {self.sniff_port},{self.redir_port} -j REDIRECT --to-port 0')
-        os.system(f'sudo iptables -t nat -I PREROUTING -i {self.interface} -p tcp -m multiport --dport {self.sniff_port},{self.redir_port} -j {self.chain}')
-
-    def __del__(self):
-        ret = 0
-        while ret == 0:
-            ret = os.system(f'sudo iptables -t nat -D PREROUTING -i {self.interface} -p tcp -m multiport --dport {self.sniff_port},{self.redir_port} -j {self.chain} 2>/dev/null')
-
-        os.system(f'sudo iptables -t nat -F {self.chain}')
-        os.system(f'sudo iptables -t nat -X {self.chain}')
-
-
-    def allow(self, src_ip):
-        """Insert iptables rules"""
-        global dport
-
-        if not src_ip in self.allowlist:
-            self.allowlist.append(src_ip)
-            os.system(f'sudo iptables -t nat -I {self.chain} -i {self.interface} -p tcp -s {src_ip} --dport {self.sniff_port} -j REDIRECT --to-port {self.redir_port}')
 
 
 def check_root():
