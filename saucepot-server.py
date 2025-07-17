@@ -381,6 +381,7 @@ def sniffer_thread():
 
 
 def check_root():
+    """Check if we have the root priv."""
     if os.geteuid() != 0:
         raise PermissionError("This script must be run as root.")
 
